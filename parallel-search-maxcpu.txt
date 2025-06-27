@@ -1,0 +1,92 @@
+function findit() {
+    # Check if no argument is provided
+    if [ -z "$1" ]; then
+        echo "❓ Usage: findit [-f | -d] <name>"
+        echo "   -f: Search files only"
+        echo "   -d: Search directories only"
+        return 1
+    fi
+
+    local search_type="all"
+    local name="$1"
+
+    # Parse options
+    while getopts "fd" opt; do
+        case $opt in
+            f) search_type="file"; shift;;
+            d) search_type="dir"; shift;;
+        esac
+    done
+
+    # Update name after option parsing
+    name="$1"
+
+    # Check if name is still empty after options
+    if [ -z "$name" ]; then
+        echo "❓ Please provide a search term"
+        return 1
+    fi
+
+    # Determine the number of CPU cores to use for parallel processing
+    local num_cores=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+    # Note: Using the maximum number of CPU cores for optimal search speed
+
+    # Count total directories and files (optional, for statistics)
+    local dir_count=$(find . -type d 2>/dev/null | wc -l)
+    local file_count=$(find . -type f 2>/dev/null | wc -l)
+
+    # Record start time
+    local start_time=$SECONDS
+
+    # Create a temporary file to store results
+    local tmpfile=$(mktemp)
+
+    # Define find options based on search type
+    local find_options
+    if [ "$search_type" = "file" ]; then
+        find_options="-type f -iname \"*$name*\""
+    elif [ "$search_type" = "dir" ]; then
+        find_options="-type d -iname \"*$name*\""
+    else
+        find_options="-iname \"*$name*\""
+    fi
+
+    # Display search start message
+    echo "🔍 Searching for '$name'..."
+
+    # Search the current directory (depth 1)
+    eval "find . -maxdepth 1 $find_options 2>/dev/null" >> "$tmpfile"
+
+    # Search subdirectories in parallel using the maximum number of CPU cores
+    find . -maxdepth 1 -type d ! -name . | xargs -P "$num_cores" -I {} zsh -c "find {} $find_options 2>/dev/null" >> "$tmpfile"
+
+    # Calculate elapsed time
+    local elapsed_time=$((SECONDS - start_time))
+
+    # Process and display results
+    if [ -s "$tmpfile" ]; then
+        # Read and format each result with emojis and colors
+        while IFS= read -r line; do
+            if [ -d "$line" ]; then
+                echo "📁 \033[1;34m$line\033[0m"  # Blue for directories
+            else
+                echo "📄 \033[1;32m$line\033[0m"  # Green for files
+            fi
+        done < "$tmpfile"
+
+        # Display total count
+        local count=$(wc -l < "$tmpfile")
+        echo "✅ Found $count item(s)"
+    else
+        echo "😕 No matches found for '$name'"
+    fi
+
+    # Display statistics
+    echo "⏱️ Time taken: $elapsed_time seconds"
+    echo "📁 Directories searched: $dir_count"
+    echo "📄 Files searched: $file_count"
+    echo "🔢 CPU cores used: $num_cores"
+
+    # Clean up temporary file
+    rm "$tmpfile"
+}
