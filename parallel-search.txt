@@ -1,0 +1,73 @@
+function findit() {
+    # Check if no argument is provided
+    if [ -z "$1" ]; then
+        echo "❓ Usage: findit [-f | -d] <name>"
+        echo "   -f: Search files only"
+        echo "   -d: Search directories only"
+        return 1
+    fi
+
+    # Initialize variables
+    local search_type="all"
+    local name="$1"
+
+    # Parse command-line options
+    while getopts "fd" opt; do
+        case $opt in
+            f) search_type="file"; shift;;
+            d) search_type="dir"; shift;;
+        esac
+    done
+
+    # Update name after option parsing
+    name="$1"
+
+    # Ensure a search term is provided
+    if [ -z "$name" ]; then
+        echo "❓ Please provide a search term"
+        return 1
+    fi
+
+    # Create a temporary file to store results
+    local tmpfile=$(mktemp)
+
+    # Define find options based on search type
+    local find_options
+    if [ "$search_type" = "file" ]; then
+        find_options="-type f -iname \"*$name*\""
+    elif [ "$search_type" = "dir" ]; then
+        find_options="-type d -iname \"*$name*\""
+    else
+        find_options="-iname \"*$name*\""
+    fi
+
+    # Display search start message
+    echo "🔍 Searching for '$name'..."
+
+    # Search the current directory (depth 1)
+    eval "find . -maxdepth 1 $find_options 2>/dev/null" >> "$tmpfile"
+
+    # Search subdirectories in parallel (using all available CPU cores)
+    find . -maxdepth 1 -type d ! -name . | xargs -P $(sysctl -n hw.ncpu) -I {} zsh -c "find {} $find_options 2>/dev/null" >> "$tmpfile"
+
+    # Process and display results
+    if [ -s "$tmpfile" ]; then
+        # Read and format each result with emojis and colors
+        while IFS= read -r line; do
+            if [ -d "$line" ]; then
+                echo "📁 \033[1;34m$line\033[0m"  # Blue for directories
+            else
+                echo "📄 \033[1;32m$line\033[0m"  # Green for files
+            fi
+        done < "$tmpfile"
+
+        # Display total count
+        local count=$(wc -l < "$tmpfile")
+        echo "✅ Found $count item(s)"
+    else
+        echo "😕 No matches found for '$name'"
+    fi
+
+    # Clean up temporary file
+    rm "$tmpfile"
+}
